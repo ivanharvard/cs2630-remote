@@ -13,7 +13,7 @@ info()  { printf '\e[1;34m[INFO]\e[0m  %s\n' "$*"; }
 warn()  { printf '\e[1;33m[WARN]\e[0m  %s\n' "$*"; }
 ok()    { printf '\e[1;32m[ OK ]\e[0m  %s\n' "$*"; }
 fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
-ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*"; read -r _ans; echo "$_ans"; }
+ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*" >&2; read -r _ans; echo "$_ans"; }
 
 ###############################################################################
 # Phase 1: Check SSH availability
@@ -24,7 +24,76 @@ command -v ssh &>/dev/null || fail "ssh not found. Install OpenSSH and retry."
 ok "ssh is available."
 
 ###############################################################################
-# Phase 2: Gather host parameters
+# Phase 2: Ensure Tailscale is installed and connected
+###############################################################################
+
+info "Checking Tailscale..."
+
+find_tailscale() {
+    if command -v tailscale &>/dev/null; then
+        command -v tailscale
+    elif [[ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]]; then
+        echo /Applications/Tailscale.app/Contents/MacOS/Tailscale
+    fi
+}
+
+TAILSCALE_BIN="$(find_tailscale || true)"
+
+if [[ -z "$TAILSCALE_BIN" ]]; then
+    warn "Tailscale is not installed."
+    case "$(uname -s)" in
+        Darwin)
+            if command -v brew &>/dev/null; then
+                _install="$(ask "[??] Install Tailscale via Homebrew now? [Y/n]:")"
+                if [[ -z "$_install" || "$_install" =~ ^[Yy]$ ]]; then
+                    brew install --cask tailscale
+                    info "Launching Tailscale.app..."
+                    open -a Tailscale
+                    sleep 2
+                else
+                    fail "Tailscale is required. Install it from https://tailscale.com/download and retry."
+                fi
+            else
+                fail "Homebrew not found. Install Tailscale from https://tailscale.com/download (or install Homebrew) and retry."
+            fi
+            ;;
+        Linux)
+            _install="$(ask "[??] Install Tailscale now via the official install script (tailscale.com/install.sh)? [Y/n]:")"
+            if [[ -z "$_install" || "$_install" =~ ^[Yy]$ ]]; then
+                curl -fsSL https://tailscale.com/install.sh | sh
+            else
+                fail "Tailscale is required. Install it from https://tailscale.com/download and retry."
+            fi
+            ;;
+        *)
+            fail "Unsupported OS for automatic Tailscale install. Install it manually from https://tailscale.com/download."
+            ;;
+    esac
+    TAILSCALE_BIN="$(find_tailscale || true)"
+    [[ -n "$TAILSCALE_BIN" ]] || fail "Tailscale installation did not complete. Install manually and retry."
+fi
+
+ok "Tailscale found: $TAILSCALE_BIN"
+
+if "$TAILSCALE_BIN" status &>/dev/null; then
+    ok "Tailscale is connected."
+else
+    warn "Tailscale is installed but not connected."
+    _up="$(ask "[??] Run 'tailscale up' now to connect? [Y/n]:")"
+    if [[ -z "$_up" || "$_up" =~ ^[Yy]$ ]]; then
+        info "A login URL will open in your browser. Authenticate this machine to your tailnet."
+        if [[ "$(uname -s)" == "Linux" ]]; then
+            sudo "$TAILSCALE_BIN" up
+        else
+            "$TAILSCALE_BIN" up
+        fi
+    else
+        fail "Tailscale must be connected to reach the CachyOS host. Run 'tailscale up' and retry."
+    fi
+fi
+
+###############################################################################
+# Phase 3: Gather host parameters
 ###############################################################################
 
 # Parameters can be supplied via environment variables for unattended runs:
@@ -52,7 +121,7 @@ info "  VM host:       $VM_HOST"
 info "  VM user:       $VM_USER"
 
 ###############################################################################
-# Phase 3: Ensure an SSH key exists
+# Phase 4: Ensure an SSH key exists
 ###############################################################################
 
 SSH_DIR="$HOME/.ssh"
@@ -76,7 +145,7 @@ else
 fi
 
 ###############################################################################
-# Phase 4: SSH config — preserve existing, use config.d
+# Phase 5: SSH config — preserve existing, use config.d
 ###############################################################################
 
 SSH_CONFIG="$SSH_DIR/config"
@@ -131,7 +200,7 @@ ssh -G cs263 2>/dev/null | grep -E '^(hostname|user|proxyjump|identityfile)' | h
 ok "SSH config is valid."
 
 ###############################################################################
-# Phase 5: Install public key on CachyOS host
+# Phase 6: Install public key on CachyOS host
 ###############################################################################
 
 info "Installing public key on CachyOS host ($CACHYOS_HOST)..."
@@ -148,7 +217,7 @@ else
 fi
 
 ###############################################################################
-# Phase 6: Verify host connectivity
+# Phase 7: Verify host connectivity
 ###############################################################################
 
 info "Testing SSH connection to CachyOS host (batch mode)..."
@@ -167,7 +236,7 @@ else
 fi
 
 ###############################################################################
-# Phase 7: Install public key on CS263 VM (via ProxyJump)
+# Phase 8: Install public key on CS263 VM (via ProxyJump)
 ###############################################################################
 
 info "Installing public key on CS263 VM ($VM_HOST) via ProxyJump..."
@@ -186,7 +255,7 @@ else
 fi
 
 ###############################################################################
-# Phase 8: Verify VM connectivity
+# Phase 9: Verify VM connectivity
 ###############################################################################
 
 info "Testing SSH connection to CS263 VM (batch mode)..."
