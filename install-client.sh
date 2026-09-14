@@ -13,7 +13,7 @@ info()  { printf '\e[1;34m[INFO]\e[0m  %s\n' "$*"; }
 warn()  { printf '\e[1;33m[WARN]\e[0m  %s\n' "$*"; }
 ok()    { printf '\e[1;32m[ OK ]\e[0m  %s\n' "$*"; }
 fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
-ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*" >&2; read -r _ans; echo "$_ans"; }
+ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*" >/dev/tty; read -r _ans </dev/tty; echo "$_ans"; }
 
 ###############################################################################
 # Phase 1: Check SSH availability
@@ -183,6 +183,7 @@ Host cachyos-home
     User $CACHYOS_USER
     IdentityFile ~/.ssh/id_ed25519
     IdentitiesOnly yes
+    ForwardAgent yes
 
 Host cs263
     HostName $VM_HOST
@@ -190,6 +191,7 @@ Host cs263
     ProxyJump cachyos-home
     IdentityFile ~/.ssh/id_ed25519
     IdentitiesOnly yes
+    ForwardAgent yes
 EOF
 chmod 600 "$CS263_CONF"
 ok "SSH config written: $CS263_CONF"

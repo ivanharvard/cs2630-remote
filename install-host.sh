@@ -12,7 +12,7 @@ info()  { printf '\e[1;34m[INFO]\e[0m  %s\n' "$*"; }
 warn()  { printf '\e[1;33m[WARN]\e[0m  %s\n' "$*"; }
 ok()    { printf '\e[1;32m[ OK ]\e[0m  %s\n' "$*"; }
 fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
-ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s [y/N] ' "$*"; read -r _ans; [[ "$_ans" =~ ^[Yy]$ ]]; }
+ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s [y/N] ' "$*" >/dev/tty; read -r _ans </dev/tty; [[ "$_ans" =~ ^[Yy]$ ]]; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -208,7 +208,54 @@ sudo systemctl reload sshd || sudo systemctl restart sshd
 ok "sshd reloaded."
 
 ###############################################################################
-# Phase 7: VirtualBox group
+# Phase 7: SSH alias for CS263 VM (direct — no ProxyJump needed on this host)
+###############################################################################
+
+VM_HOST="${VM_HOST:-192.168.26.3}"
+VM_USER="${VM_USER:-student}"
+
+SSH_DIR="$HOME/.ssh"
+SSH_CONFIG="$SSH_DIR/config"
+SSH_CONFIG_D="$SSH_DIR/config.d"
+CS263_CONF="$SSH_CONFIG_D/cs263.conf"
+
+mkdir -p "$SSH_CONFIG_D"
+chmod 700 "$SSH_CONFIG_D"
+
+INCLUDE_LINE="Include ~/.ssh/config.d/*"
+if [[ -f "$SSH_CONFIG" ]] && grep -qF "config.d" "$SSH_CONFIG"; then
+    ok "Main SSH config already includes config.d."
+else
+    if [[ -f "$SSH_CONFIG" ]]; then
+        BACKUP="$SSH_CONFIG.bak.$(date +%Y%m%dT%H%M%S)"
+        cp "$SSH_CONFIG" "$BACKUP"
+        info "Backed up existing SSH config to: $BACKUP"
+        TMP="$(mktemp)"
+        { echo "$INCLUDE_LINE"; echo ""; cat "$SSH_CONFIG"; } > "$TMP"
+        mv "$TMP" "$SSH_CONFIG"
+    else
+        echo "$INCLUDE_LINE" > "$SSH_CONFIG"
+    fi
+    chmod 600 "$SSH_CONFIG"
+    ok "Added Include directive to $SSH_CONFIG"
+fi
+
+info "Writing $CS263_CONF..."
+cat > "$CS263_CONF" <<EOF
+Host cs263
+    HostName $VM_HOST
+    User $VM_USER
+    ForwardAgent yes
+EOF
+chmod 600 "$CS263_CONF"
+ok "SSH alias written: cs263 -> ${VM_USER}@${VM_HOST}"
+
+info "Validating effective SSH configuration for cs263..."
+ssh -G cs263 2>/dev/null | grep -E '^(hostname|user)' | head -5
+ok "SSH alias 'cs263' configured for direct access."
+
+###############################################################################
+# Phase 8: VirtualBox group
 ###############################################################################
 
 info "Ensuring $CACHYOS_USER is in vboxusers group..."
@@ -231,6 +278,9 @@ ok "Host setup complete."
 printf '\n'
 info "Your Tailscale address: ${TAILSCALE_ADDR}"
 info "CachyOS username:       ${CACHYOS_USER}"
+printf '\n'
+info "You can SSH directly to the VM from this host with:"
+info "    ssh cs263"
 printf '\n'
 info "Next steps:"
 info "  1. Import the CS263 OVA in VirtualBox (follow course instructions)."
