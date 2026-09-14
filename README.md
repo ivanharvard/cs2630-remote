@@ -36,7 +36,7 @@ Can't or don't want to run VirtualBox locally (Windows, an Apple Silicon Mac, or
 Review the script, then run it as your normal (non-root) user:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cs2630-remote.git
+git clone https://github.com/ivanharvard/cs2630-remote.git
 cd cs2630-remote
 ./install-host.sh
 ```
@@ -44,7 +44,7 @@ cd cs2630-remote
 Or pipe directly (review first):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/cs2630-remote/main/install-host.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ivanharvard/cs2630-remote/main/install-host.sh | bash
 ```
 
 The script detects your OS (Arch-based Linux, Ubuntu, or Intel macOS) and will:
@@ -81,7 +81,7 @@ Linux: creates `~/.config/systemd/user/cs2630-vm.service`. macOS: creates a `~/L
 On any Linux or macOS machine you want to SSH from:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cs2630-remote.git
+git clone https://github.com/ivanharvard/cs2630-remote.git
 cd cs2630-remote
 ./install-client.sh
 ```
@@ -153,10 +153,8 @@ cs2630-remote/
 │   └── verify.sh
 ├── systemd/
 │   └── cs2630-vm.service.template   # Linux autostart
-├── launchd/
-│   └── cs2630-vm.plist.template     # macOS autostart
-└── docs/
-    └── AGENT_SETUP.md           # Full design spec
+└── launchd/
+    └── cs2630-vm.plist.template     # macOS autostart
 ```
 
 ---

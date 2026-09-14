@@ -300,9 +300,20 @@ fi
 
 info "Installing cs2630 CLI helper..."
 mkdir -p "$HOME/.local/bin"
-chmod +x "$SCRIPT_DIR/bin/cs2630"
-ln -sf "$SCRIPT_DIR/bin/cs2630" "$HOME/.local/bin/cs2630"
-ok "cs2630 CLI linked: $HOME/.local/bin/cs2630 -> $SCRIPT_DIR/bin/cs2630"
+if [[ -f "$SCRIPT_DIR/bin/cs2630" ]]; then
+    chmod +x "$SCRIPT_DIR/bin/cs2630"
+    ln -sf "$SCRIPT_DIR/bin/cs2630" "$HOME/.local/bin/cs2630"
+    ok "cs2630 CLI linked: $HOME/.local/bin/cs2630 -> $SCRIPT_DIR/bin/cs2630"
+else
+    # Running via curl | bash: no local repo to symlink into, so fetch the
+    # CLI script directly instead.
+    info "No local repo found next to this script (likely running via curl | bash) — downloading the CLI standalone..."
+    curl -fsSL https://raw.githubusercontent.com/ivanharvard/cs2630-remote/main/bin/cs2630 -o "$HOME/.local/bin/cs2630"
+    chmod +x "$HOME/.local/bin/cs2630"
+    ok "cs2630 CLI installed: $HOME/.local/bin/cs2630"
+    warn "This is a standalone copy — 'cs2630 install host/aws', 'cs2630 verify', and 'cs2630 autostart' need"
+    warn "the full repo. Clone it if you'll need those: git clone https://github.com/ivanharvard/cs2630-remote.git"
+fi
 
 case ":$PATH:" in
     *":$HOME/.local/bin:"*)
