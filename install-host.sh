@@ -245,6 +245,18 @@ info "  5. Verify everything with:"
 info "       ./scripts/verify.sh"
 printf '\n'
 if ! $HAS_PUBKEY; then
-    warn "REMINDER: Add your client's public key to $AUTH_KEYS,"
-    warn "then disable password auth in $SSHD_DROPIN."
+    warn "Password authentication is still enabled. Complete these steps to lock it down:"
+    printf '\n'
+    warn "  STEP A — On your remote client, copy your public key to this host:"
+    warn "    ssh-copy-id ${CACHYOS_USER}@${TAILSCALE_ADDR}"
+    warn "  (If ssh-copy-id is unavailable, run this on the client instead:)"
+    warn "    cat ~/.ssh/id_ed25519.pub | ssh ${CACHYOS_USER}@${TAILSCALE_ADDR} \\"
+    warn "      'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'"
+    printf '\n'
+    warn "  STEP B — Verify key login works (run from the remote client):"
+    warn "    ssh -o BatchMode=yes ${CACHYOS_USER}@${TAILSCALE_ADDR} true && echo 'Key auth works'"
+    printf '\n'
+    warn "  STEP C — Once key login is confirmed, disable password auth on THIS host:"
+    warn "    sudo sed -i 's/^# PasswordAuthentication no/PasswordAuthentication no/' $SSHD_DROPIN"
+    warn "    sudo sshd -t && sudo systemctl reload sshd"
 fi
