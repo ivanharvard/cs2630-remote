@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Configures a user-level systemd service to start the CS263 VirtualBox VM
-# headlessly at login/boot. Safe to re-run.
+# Configures the CS2630 VirtualBox VM to start headlessly at login/boot:
+# a systemd --user service on Linux, a LaunchAgent on macOS. Safe to re-run.
 
 set -euo pipefail
 
@@ -15,15 +15,32 @@ fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
 ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*" >/dev/tty; read -r _ans </dev/tty; echo "$_ans"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATE="$SCRIPT_DIR/../systemd/cs263-vm.service.template"
-SERVICE_DIR="$HOME/.config/systemd/user"
-SERVICE_FILE="$SERVICE_DIR/cs263-vm.service"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+case "$(uname -s)" in
+    Darwin) HOST_OS=macos ;;
+    Linux)  HOST_OS=linux ;;
+    *)      fail "Unsupported OS: $(uname -s)." ;;
+esac
+
+CS2630_STATE_DIR="$HOME/.config/cs2630"
+VM_NAME_FILE="$CS2630_STATE_DIR/vm-name"
 
 ###############################################################################
 # Validate environment
 ###############################################################################
 
 command -v VBoxManage &>/dev/null || fail "VBoxManage not found. Is VirtualBox installed?"
+
+if [[ "$HOST_OS" == linux ]]; then
+    TEMPLATE="$REPO_DIR/systemd/cs2630-vm.service.template"
+    SERVICE_DIR="$HOME/.config/systemd/user"
+    SERVICE_FILE="$SERVICE_DIR/cs2630-vm.service"
+else
+    TEMPLATE="$REPO_DIR/launchd/cs2630-vm.plist.template"
+    SERVICE_DIR="$HOME/Library/LaunchAgents"
+    SERVICE_FILE="$SERVICE_DIR/com.cs2630.vm.plist"
+fi
 [[ -f "$TEMPLATE" ]] || fail "Service template not found: $TEMPLATE"
 
 ###############################################################################
@@ -34,7 +51,7 @@ info "Enumerating VirtualBox VMs..."
 VM_LIST="$(VBoxManage list vms 2>/dev/null)"
 
 if [[ -z "$VM_LIST" ]]; then
-    fail "No VirtualBox VMs found. Import the CS263 OVA first, then re-run this script."
+    fail "No VirtualBox VMs found. Import the CS2630 OVA first, then re-run this script."
 fi
 
 printf '\n%s\n\n' "$VM_LIST"
@@ -58,6 +75,12 @@ else
 fi
 
 ok "Selected VM: $VM_NAME"
+
+# Persisted so `cs2630 poweron`/`poweroff` can drive VBoxManage directly
+# without depending on the host's service manager.
+mkdir -p "$CS2630_STATE_DIR"
+printf '%s\n' "$VM_NAME" > "$VM_NAME_FILE"
+ok "Recorded VM name in $VM_NAME_FILE"
 
 ###############################################################################
 # Check if VM is already running
@@ -83,16 +106,23 @@ sed "s/__VM_NAME__/$VM_NAME_ESCAPED/g" "$TEMPLATE" > "$SERVICE_FILE"
 ok "Service file written."
 
 ###############################################################################
-# Enable service and linger
+# Enable service
 ###############################################################################
 
-systemctl --user daemon-reload
-systemctl --user enable cs263-vm.service
-ok "cs263-vm.service enabled."
+if [[ "$HOST_OS" == linux ]]; then
+    systemctl --user daemon-reload
+    systemctl --user enable cs2630-vm.service
+    ok "cs2630-vm.service enabled."
 
-info "Enabling linger for $USER (allows user services to run at boot)..."
-sudo loginctl enable-linger "$USER"
-ok "Linger enabled for $USER."
+    info "Enabling linger for $USER (allows user services to run at boot)..."
+    sudo loginctl enable-linger "$USER"
+    ok "Linger enabled for $USER."
+else
+    # bootstrap fails if already loaded from a previous run — that's fine.
+    launchctl bootstrap "gui/$(id -u)" "$SERVICE_FILE" 2>/dev/null || true
+    launchctl enable "gui/$(id -u)/com.cs2630.vm"
+    ok "com.cs2630.vm LaunchAgent enabled."
+fi
 
 ###############################################################################
 # Start the VM if not already running
@@ -103,11 +133,15 @@ if echo "$RUNNING" | grep -qF "\"$VM_NAME\""; then
 else
     _start="$(ask "[??] Start the VM now in headless mode? [Y/n]:")"
     if [[ -z "$_start" || "$_start" =~ ^[Yy]$ ]]; then
-        systemctl --user start cs263-vm.service
-        ok "VM started via systemd service."
+        if [[ "$HOST_OS" == linux ]]; then
+            systemctl --user start cs2630-vm.service
+        else
+            launchctl kickstart -k "gui/$(id -u)/com.cs2630.vm"
+        fi
+        ok "VM started."
     else
         info "You can start the VM later with:"
-        info "  systemctl --user start cs263-vm.service"
+        info "  cs2630 poweron"
     fi
 fi
 
@@ -121,9 +155,15 @@ printf '\n'
 ok "VM autostart configured for: $VM_NAME"
 printf '\n'
 info "Useful commands:"
-info "  Status:  systemctl --user status cs263-vm.service"
-info "  Start:   systemctl --user start  cs263-vm.service"
-info "  Stop:    systemctl --user stop   cs263-vm.service"
+if [[ "$HOST_OS" == linux ]]; then
+    info "  Status:  systemctl --user status cs2630-vm.service"
+    info "  Start:   cs2630 poweron   (or: systemctl --user start cs2630-vm.service)"
+    info "  Stop:    cs2630 poweroff  (or: systemctl --user stop  cs2630-vm.service)"
+else
+    info "  Status:  launchctl print gui/$(id -u)/com.cs2630.vm"
+    info "  Start:   cs2630 poweron"
+    info "  Stop:    cs2630 poweroff"
+fi
 info "  Running: VBoxManage list runningvms"
 printf '\n'
 info "The VM will start headlessly on next login/boot."

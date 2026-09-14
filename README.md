@@ -1,58 +1,63 @@
-# cachyos-cs263-remote
+# cs2630-remote
 
-Reproducible remote-access setup for the CS263 course VM running in VirtualBox on a CachyOS host. Remote clients reach the VM through a Tailscale-private SSH tunnel — no router port-forwarding required.
+Reproducible remote-access setup for the CS2630 course VM running in VirtualBox on a host machine you control. Remote clients reach the VM through a Tailscale-private SSH tunnel — no router port-forwarding required.
 
 ```
 Remote client
     |
     | Tailscale private network
     v
-CachyOS host  (tailscaled + sshd)
+Host  (Arch-based Linux, Ubuntu, or Intel macOS — tailscaled + sshd)
     |
     | 192.168.26.0/24 host-only network
     v
-CS263 VM  —  student@192.168.26.3
+CS2630 VM  —  student@192.168.26.3
 ```
 
-Final UX: `ssh cs263` from any Tailscale-connected client.
+Final UX: `ssh cs2630` from any Tailscale-connected client.
+
+Can't or don't want to run VirtualBox locally (Windows, an Apple Silicon Mac, or an underpowered laptop)? Skip straight to [AWS EC2 instead](#alternative-aws-ec2-no-local-virtualbox) — no host machine needed at all.
 
 ---
 
 ## Requirements
 
-- **CachyOS host and remote client:** [VS Code](https://code.visualstudio.com/) with the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension (`ms-vscode-remote.remote-ssh`) installed. Both `install-host.sh` and `install-client.sh` check for it (via the `code` CLI) and offer to install it if missing.
+- **Host machine:** Arch-based Linux (e.g. CachyOS), Ubuntu, or an **Intel** Mac. VirtualBox has no official Apple Silicon (arm64) build — `install-host.sh` detects arm64 Macs and stops with an explanation. Windows isn't supported as a local host either (VirtualBox can't load its kernel driver inside WSL2) — use the AWS path instead.
+- **Host and remote client:** [VS Code](https://code.visualstudio.com/) with the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension (`ms-vscode-remote.remote-ssh`) installed. Both `install-host.sh` and `install-client.sh` check for it (via the `code` CLI) and offer to install it if missing.
 
 ---
 
 ## Quick start
 
-### 1 — CachyOS host
+### 1 — Host machine
 
 Review the script, then run it as your normal (non-root) user:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cachyos-cs263-remote.git
-cd cachyos-cs263-remote
+git clone https://github.com/YOUR_USERNAME/cs2630-remote.git
+cd cs2630-remote
 ./install-host.sh
 ```
 
 Or pipe directly (review first):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/cachyos-cs263-remote/main/install-host.sh | bash
+curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/cs2630-remote/main/install-host.sh | bash
 ```
 
-The script will:
-- Install `tailscale`, `openssh`, `virtualbox`, `virtualbox-host-dkms`, and the correct kernel headers
-- Enable and start `tailscaled` and `sshd`
+The script detects your OS (Arch-based Linux, Ubuntu, or Intel macOS) and will:
+- Install `tailscale`, OpenSSH, VirtualBox, and (on Linux) the matching kernel headers
+- Enable and start Tailscale and sshd
 - Walk you through Tailscale enrollment if needed
 - Harden SSH (drop-in config, no existing files overwritten)
-- Add your user to `vboxusers`
+- Add your user to `vboxusers` (Linux only — macOS VirtualBox has no such group)
 - Check for the VS Code Remote-SSH extension and offer to install it
+
+On macOS, VirtualBox and Tailscale each require a one-time manual approval in **System Settings → Privacy & Security** before they'll work — the script tells you when this is needed; it can't be scripted around.
 
 ### 2 — Import the course VM
 
-Follow the course instructions to import the CS263 OVA in VirtualBox. Configure:
+Follow the course instructions to import the CS2630 OVA in VirtualBox. Configure:
 
 - **Adapter 1:** Host-only Adapter — network `192.168.26.0/24`, host at `192.168.26.1`
 - **Adapter 2:** NAT
@@ -67,27 +72,27 @@ After importing the OVA:
 ./scripts/configure-vm-autostart.sh
 ```
 
-This creates `~/.config/systemd/user/cs263-vm.service` and enables it so the VM starts headlessly at login.
+Linux: creates `~/.config/systemd/user/cs2630-vm.service`. macOS: creates a `~/Library/LaunchAgents/com.cs2630.vm.plist` LaunchAgent. Either way, the VM starts headlessly at login, and the selected VM's name is recorded to `~/.config/cs2630/vm-name` so `cs2630 poweron`/`poweroff` can drive it directly.
 
 ### 4 — Remote client
 
 On any Linux or macOS machine you want to SSH from:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/cachyos-cs263-remote.git
-cd cachyos-cs263-remote
+git clone https://github.com/YOUR_USERNAME/cs2630-remote.git
+cd cs2630-remote
 ./install-client.sh
 ```
 
 Or unattended:
 
 ```bash
-CACHYOS_HOST=myhost.tailnet-name.ts.net \
-CACHYOS_USER=alice \
+HOST_ADDR=myhost.tailnet-name.ts.net \
+HOST_USER=alice \
 ./install-client.sh
 ```
 
-The script generates `~/.ssh/config.d/cs263.conf` and installs your public key on both the host and the VM.
+The script generates `~/.ssh/config.d/cs2630.conf` and installs your public key on both the host and the VM.
 
 ### 5 — Verify
 
@@ -97,41 +102,63 @@ The script generates `~/.ssh/config.d/cs263.conf` and installs your public key o
 
 ---
 
+## Alternative: AWS EC2 (no local VirtualBox)
+
+The course documents a fallback: run the course environment on a free-tier-eligible AWS EC2 instance instead of locally. `install-aws.sh` automates that end-to-end — useful on Windows, an Apple Silicon Mac, or any machine where local VirtualBox isn't practical. No host machine, Tailscale, or VirtualBox needed; it's a direct SSH connection to a public EC2 instance.
+
+```bash
+./install-aws.sh
+```
+
+It provisions an EC2 instance from the course AMI (region `us-east-1` by default), waits for it to boot, installs the same course software packages the local VM ships with, and writes an `ssh cs2630-aws` alias. Connect with:
+
+```bash
+ssh -A -L 8080:localhost:8080 cs2630-aws
+```
+
+This creates **real, billable AWS resources** (usually free-tier eligible, but still your responsibility) and a security group open to SSH from anywhere — the script asks for confirmation before creating anything, and prints the `aws ec2 stop-instances`/`terminate-instances` commands to clean up when you're done. See `cs2630 install aws` / the script itself for the full list of overridable parameters (`AWS_REGION`, `INSTANCE_TYPE`, etc).
+
+---
+
 ## Repository layout
 
 ```
-cachyos-cs263-remote/
-├── install-host.sh              # CachyOS host setup
+cs2630-remote/
+├── install-host.sh              # Host setup (Arch-based Linux, Ubuntu, Intel macOS)
 ├── install-client.sh            # Remote SSH client setup
+├── install-aws.sh               # AWS EC2 fallback (no local VirtualBox needed)
 ├── bin/
-│   └── cs263                    # Unified CLI helper (see below)
+│   └── cs2630                   # Unified CLI helper (see below)
 ├── scripts/
 │   ├── configure-vm-autostart.sh
 │   └── verify.sh
 ├── systemd/
-│   └── cs263-vm.service.template
+│   └── cs2630-vm.service.template   # Linux autostart
+├── launchd/
+│   └── cs2630-vm.plist.template     # macOS autostart
 └── docs/
     └── AGENT_SETUP.md           # Full design spec
 ```
 
 ---
 
-## `cs263` CLI helper
+## `cs2630` CLI helper
 
-Both `install-host.sh` and `install-client.sh` symlink [`bin/cs263`](bin/cs263) to `~/.local/bin/cs263`, giving you one command on either machine:
+Both `install-host.sh` and `install-client.sh` symlink [`bin/cs2630`](bin/cs2630) to `~/.local/bin/cs2630`, giving you one command on either machine:
 
 ```bash
-cs263 sh                # ssh cs263
-cs263 code <path>       # code --remote ssh-remote+cs263 /home/student/<path>
-cs263 poweron           # start the VM — hops to the host over SSH if run from a client
-cs263 poweroff          # gracefully stop the VM (ACPI shutdown)
-cs263 install host      # ./install-host.sh
-cs263 install client    # ./install-client.sh
-cs263 verify            # ./scripts/verify.sh
-cs263 autostart         # ./scripts/configure-vm-autostart.sh
+cs2630 sh                # ssh cs2630
+cs2630 code <path>       # code --remote ssh-remote+cs2630 /home/student/<path>
+cs2630 poweron           # start the VM — hops to the host over SSH if run from a client
+cs2630 poweroff          # gracefully stop the VM (ACPI shutdown)
+cs2630 install host      # ./install-host.sh
+cs2630 install client    # ./install-client.sh
+cs2630 install aws       # ./install-aws.sh
+cs2630 verify            # ./scripts/verify.sh
+cs2630 autostart         # ./scripts/configure-vm-autostart.sh
 ```
 
-`poweron`/`poweroff` detect whether they're running on the CachyOS host (VirtualBox present) or a remote client; on a client they run the command over `ssh cachyos-home` instead. Make sure `~/.local/bin` is on your `PATH` — the installers warn if it isn't.
+`poweron`/`poweroff` detect whether they're running on the host (VirtualBox present locally) or a remote client; on a client they run the command over `ssh cs2630-host` instead, driving `VBoxManage` directly on whichever OS the host happens to be. Make sure `~/.local/bin` is on your `PATH` — the installers warn if it isn't.
 
 ---
 
@@ -139,11 +166,12 @@ cs263 autostart         # ./scripts/configure-vm-autostart.sh
 
 - Remote access uses Tailscale; no TCP/22 exposure on the home router.
 - SSH private keys never leave their originating client.
-- Password auth on the CachyOS host is disabled only after a public key is confirmed.
+- Password auth on the host is disabled only after a public key is confirmed.
 - Root SSH login is disabled.
 - VM shutdown always uses ACPI (graceful), never a hard power-off.
-- No secrets, keys, or credentials are committed to this repository.
+- No secrets, keys, or credentials are committed to this repository (`.gitignore` excludes `*.pem` and friends).
 - The course OVA is not included; treat it as course material.
+- The AWS path (`install-aws.sh`) is a different security model by necessity: it opens SSH to `0.0.0.0/0`, matching the course's own AWS instructions, protected only by key-based auth. It asks for explicit confirmation before creating anything.
 
 ---
 
@@ -151,8 +179,11 @@ cs263 autostart         # ./scripts/configure-vm-autostart.sh
 
 | Symptom | Check |
 |---|---|
-| `ssh cs263` times out | `./scripts/verify.sh` — look for FAIL on Tailscale or VM reachability |
-| `vboxdrv` not loaded | `sudo modprobe vboxdrv` or reboot after kernel headers install |
-| Group change not effective | Log out and back in, or reboot |
-| VM won't start headless | `systemctl --user status cs263-vm.service` + `journalctl --user -eu cs263-vm` |
-| Tailscale not enrolled | `sudo tailscale up` |
+| `ssh cs2630` times out | `./scripts/verify.sh` — look for FAIL on Tailscale or VM reachability |
+| `vboxdrv` not loaded (Linux) | `sudo modprobe vboxdrv` or reboot after kernel headers install |
+| VirtualBox error about kernel driver (macOS) | Approve the system extension: System Settings → Privacy & Security → Allow |
+| Group change not effective (Linux) | Log out and back in, or reboot |
+| VM won't start headless (Linux) | `systemctl --user status cs2630-vm.service` + `journalctl --user -eu cs2630-vm` |
+| VM won't start headless (macOS) | `launchctl print gui/$(id -u)/com.cs2630.vm` |
+| Tailscale not enrolled | `sudo tailscale up` (Linux) or `tailscale up` (macOS) |
+| VirtualBox won't run at all | Apple Silicon Mac or Windows/WSL — not supported locally, use `./install-aws.sh` |

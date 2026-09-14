@@ -1,5 +1,5 @@
 [Unit]
-Description=CS263 VirtualBox VM
+Description=CS2630 VirtualBox VM
 After=network-online.target
 Wants=network-online.target
 
