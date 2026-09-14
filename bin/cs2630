@@ -29,14 +29,20 @@ REPO_DIR="$(cd "$(dirname "$(resolve_symlink "${BASH_SOURCE[0]}")")/.." && pwd)"
 VM_USER="${VM_USER:-student}"
 VM_REMOTE_HOME="${VM_REMOTE_HOME:-/home/$VM_USER}"
 
+# Access-mode preference: which VM cs2630 talks to when a command needs one.
+CS2630_STATE_DIR="$HOME/.config/cs2630"
+MODE_FILE="$CS2630_STATE_DIR/access-mode"   # contents: "aws" | "local" | "ask"
+ACCESS_MODE=""
+
 usage() {
     cat <<'EOF'
 Usage: cs2630 <command> [args]
 
-  sh                    SSH into the CS2630 VM                 (ssh cs2630)
-  code <path>           Open <path> on the VM in VS Code       (Remote-SSH)
-  poweron               Start the VM (hops to the host if needed)
-  poweroff              Gracefully stop the VM (ACPI shutdown)
+  sh                    SSH into the CS2630 VM                 (ssh cs2630, or cs2630-aws in AWS mode)
+  code <path>           Open <path> on the VM in VS Code       (Remote-SSH; local or AWS, per access mode)
+  poweron               Start the VM (VBoxManage locally, or ec2 start-instances in AWS mode)
+  poweroff              Gracefully stop the VM (ACPI locally, or ec2 stop-instances in AWS mode)
+  config                Choose (or change) how cs2630 reaches the VM: AWS, Local, or ask each time
   install host          Run install-host.sh
   install client        Run install-client.sh
   install aws           Run install-aws.sh
@@ -62,21 +68,141 @@ vm_running() {
     [[ -n "$(run_on_host 'VBoxManage list runningvms' 2>/dev/null)" ]]
 }
 
+# Interactive picker for how cs2630 should reach the VM. Writes the choice to
+# $MODE_FILE. Called on first use of any VM-targeting command, and directly
+# by `cs2630 config` to change the choice later.
+configure_mode() {
+    mkdir -p "$CS2630_STATE_DIR"
+    printf '\n' >/dev/tty
+    printf 'I see two ways to access the CS2630 VM. Which do you prefer?\n' >/dev/tty
+    printf '  1) AWS     — the EC2 instance from install-aws.sh      (cs2630-aws)\n' >/dev/tty
+    printf '  2) Local   — the VirtualBox VM on your host            (cs2630)\n' >/dev/tty
+    printf '  3) Ask me every time\n' >/dev/tty
+    local choice mode
+    while true; do
+        printf '\e[1;36m[ ?? ]\e[0m  Enter 1, 2, or 3: ' >/dev/tty
+        read -r choice </dev/tty
+        case "$choice" in
+            1) mode=aws;   break ;;
+            2) mode=local; break ;;
+            3) mode=ask;   break ;;
+            *) warn "Please enter 1, 2, or 3." ;;
+        esac
+    done
+    printf '%s\n' "$mode" > "$MODE_FILE"
+    case "$mode" in
+        aws)
+            [[ -f "$HOME/.ssh/config.d/cs2630-aws.conf" ]] \
+                || warn "No AWS setup found yet. Run: cs2630 install aws"
+            ;;
+        local)
+            [[ -f "$HOME/.ssh/config.d/cs2630.conf" ]] \
+                || warn "No local host/client setup found yet. Run: cs2630 install host  (or: cs2630 install client)"
+            ;;
+    esac
+    ok "Got it. Change this anytime with: cs2630 config"
+}
+
+# Sets the global ACCESS_MODE to "aws" or "local" for this invocation.
+# Prompts on first use (no $MODE_FILE yet), and re-prompts every call when
+# the saved preference is "ask".
+resolve_mode() {
+    mkdir -p "$CS2630_STATE_DIR"
+    [[ -f "$MODE_FILE" ]] || configure_mode
+    local saved
+    saved="$(<"$MODE_FILE")"
+    if [[ "$saved" == "ask" ]]; then
+        local choice
+        printf '\e[1;36m[ ?? ]\e[0m  Access the VM via (1) AWS or (2) Local this time? [1/2]: ' >/dev/tty
+        read -r choice </dev/tty
+        case "$choice" in
+            1) ACCESS_MODE=aws ;;
+            *) ACCESS_MODE=local ;;
+        esac
+    elif [[ "$saved" == "aws" ]]; then
+        ACCESS_MODE=aws
+    else
+        ACCESS_MODE=local
+    fi
+}
+
+# Reads INSTANCE_ID / AWS_REGION recorded by install-aws.sh.
+aws_instance_info() {
+    local f="$CS2630_STATE_DIR/aws-instance"
+    [[ -f "$f" ]] || { echo "No AWS instance configured. Run: cs2630 install aws" >&2; exit 1; }
+    # shellcheck disable=SC1090
+    source "$f"
+    [[ -n "${INSTANCE_ID:-}" && -n "${AWS_REGION:-}" ]] \
+        || { echo "AWS instance info incomplete in $f. Re-run: cs2630 install aws" >&2; exit 1; }
+}
+
+aws_poweron() {
+    command -v aws &>/dev/null || fail_aws_cli
+    aws_instance_info
+    local state
+    state="$(aws --region "$AWS_REGION" ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+        --query 'Reservations[0].Instances[0].State.Name' --output text)"
+    if [[ "$state" == running ]]; then
+        ok "AWS instance is already running."
+        return
+    fi
+    info "Starting AWS instance $INSTANCE_ID..."
+    aws --region "$AWS_REGION" ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null
+    aws --region "$AWS_REGION" ec2 wait instance-running --instance-ids "$INSTANCE_ID"
+    ok "AWS instance started."
+    warn "Starting the instance may have assigned it a new public DNS name."
+    warn "If SSH fails, re-run: cs2630 install aws  (refreshes the cs2630-aws alias)"
+}
+
+aws_poweroff() {
+    command -v aws &>/dev/null || fail_aws_cli
+    aws_instance_info
+    local state
+    state="$(aws --region "$AWS_REGION" ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+        --query 'Reservations[0].Instances[0].State.Name' --output text)"
+    if [[ "$state" == stopped ]]; then
+        ok "AWS instance is already stopped."
+        return
+    fi
+    info "Stopping AWS instance $INSTANCE_ID..."
+    aws --region "$AWS_REGION" ec2 stop-instances --instance-ids "$INSTANCE_ID" >/dev/null
+    aws --region "$AWS_REGION" ec2 wait instance-stopped --instance-ids "$INSTANCE_ID"
+    ok "AWS instance stopped."
+}
+
+fail_aws_cli() {
+    echo "AWS CLI not found. Install it: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" >&2
+    exit 1
+}
+
 cmd="${1:-}"
 shift || true
 
 case "$cmd" in
     sh)
-        exec ssh cs2630
+        resolve_mode
+        if [[ "$ACCESS_MODE" == aws ]]; then
+            exec ssh cs2630-aws
+        else
+            exec ssh cs2630
+        fi
         ;;
     code)
         [[ $# -ge 1 ]] || { echo "Usage: cs2630 code <path>" >&2; exit 1; }
         target="$1"
         [[ "$target" = /* ]] || target="$VM_REMOTE_HOME/$target"
-        exec code --remote "ssh-remote+cs2630" "$target"
+        resolve_mode
+        if [[ "$ACCESS_MODE" == aws ]]; then
+            exec code --remote "ssh-remote+cs2630-aws" "$target"
+        else
+            exec code --remote "ssh-remote+cs2630" "$target"
+        fi
         ;;
     poweron)
-        if vm_running; then
+        resolve_mode
+        if [[ "$ACCESS_MODE" == aws ]]; then
+            aws_poweron
+        elif vm_running; then
             ok "VM is already running."
         else
             info "Starting the VM..."
@@ -85,6 +211,11 @@ case "$cmd" in
         fi
         ;;
     poweroff)
+        resolve_mode
+        if [[ "$ACCESS_MODE" == aws ]]; then
+            aws_poweroff
+            exit 0
+        fi
         if ! vm_running; then
             ok "VM is already off."
             exit 0
@@ -101,6 +232,9 @@ case "$cmd" in
         vm_name="$(run_on_host 'VBoxManage list runningvms' 2>/dev/null | sed -n 's/^"\(.*\)" {.*}/\1/p' | head -1)"
         warn "To force it off, run on the host: VBoxManage controlvm \"${vm_name:-<name>}\" poweroff"
         exit 1
+        ;;
+    config)
+        configure_mode
         ;;
     install)
         sub="${1:-}"

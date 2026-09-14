@@ -18,6 +18,8 @@ Final UX: `ssh cs2630` from any Tailscale-connected client.
 
 Can't or don't want to run VirtualBox locally (Windows, an Apple Silicon Mac, or an underpowered laptop)? Skip straight to [AWS EC2 instead](#alternative-aws-ec2-no-local-virtualbox) — no host machine needed at all.
 
+**Recommended way to start:** run `./install.sh` once — it just installs the [`cs2630`](#cs2630-cli-helper) CLI helper onto your `PATH`. From there, pick your path with `cs2630 install host`, `cs2630 install client`, or `cs2630 install aws`. Prefer not to go through the CLI? Each of `install-host.sh`, `install-client.sh`, and `install-aws.sh` also works fine run directly — they install the CLI themselves too.
+
 ---
 
 ## Requirements
@@ -106,6 +108,14 @@ The script generates `~/.ssh/config.d/cs2630.conf` and installs your public key 
 
 The course documents a fallback: run the course environment on a free-tier-eligible AWS EC2 instance instead of locally. `install-aws.sh` automates that end-to-end — useful on Windows, an Apple Silicon Mac, or any machine where local VirtualBox isn't practical. No host machine, Tailscale, or VirtualBox needed; it's a direct SSH connection to a public EC2 instance.
 
+**Prerequisite:** the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html), authenticated with credentials that can create EC2 instances. If you don't have an access key yet: AWS Console → search **IAM** → **Users** → your user → **Security credentials** tab → **Create access key**. Then store it locally with:
+
+```bash
+aws configure
+```
+
+This writes the key ID/secret to `~/.aws/credentials` and the default region to `~/.aws/config` — the standard location the AWS CLI (and `install-aws.sh`) reads from automatically. Verify it worked with `aws sts get-caller-identity`.
+
 ```bash
 ./install-aws.sh
 ```
@@ -118,12 +128,21 @@ ssh -A -L 8080:localhost:8080 cs2630-aws
 
 This creates **real, billable AWS resources** (usually free-tier eligible, but still your responsibility) and a security group open to SSH from anywhere — the script asks for confirmation before creating anything, and prints the `aws ec2 stop-instances`/`terminate-instances` commands to clean up when you're done. See `cs2630 install aws` / the script itself for the full list of overridable parameters (`AWS_REGION`, `INSTANCE_TYPE`, etc).
 
+**Using this from a second machine?** The `.pem` private key `install-aws.sh` generates can't be copied between machines — AWS never re-exports it. Instead, generate a normal SSH keypair on the second machine (`ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519` if it doesn't have one yet), then from a machine that **already has access**, run:
+
+```bash
+GRANT_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" ./install-aws.sh   # paste the *other* machine's public key here
+```
+
+That appends the given public key to the instance's `authorized_keys` over the existing working connection — safe to do, since a public key isn't secret. The second machine can then connect directly with its own key, no `.pem` needed there.
+
 ---
 
 ## Repository layout
 
 ```
 cs2630-remote/
+├── install.sh                   # Recommended entry point: installs just the cs2630 CLI
 ├── install-host.sh              # Host setup (Arch-based Linux, Ubuntu, Intel macOS)
 ├── install-client.sh            # Remote SSH client setup
 ├── install-aws.sh               # AWS EC2 fallback (no local VirtualBox needed)
@@ -144,13 +163,15 @@ cs2630-remote/
 
 ## `cs2630` CLI helper
 
-Both `install-host.sh` and `install-client.sh` symlink [`bin/cs2630`](bin/cs2630) to `~/.local/bin/cs2630`, giving you one command on either machine:
+`install.sh` and all three of `install-host.sh`/`install-client.sh`/`install-aws.sh` symlink [`bin/cs2630`](bin/cs2630) to `~/.local/bin/cs2630`, giving you one command everywhere:
 
 ```bash
-cs2630 sh                # ssh cs2630
-cs2630 code <path>       # code --remote ssh-remote+cs2630 /home/student/<path>
-cs2630 poweron           # start the VM — hops to the host over SSH if run from a client
-cs2630 poweroff          # gracefully stop the VM (ACPI shutdown)
+cs2630 sh                # ssh cs2630 (or cs2630-aws, depending on your access mode)
+cs2630 code <path>       # code --remote ssh-remote+cs2630(-aws) /home/student/<path>
+cs2630 poweron           # start the VM — local: hops to the host over SSH if run from a client
+                          #                aws: aws ec2 start-instances
+cs2630 poweroff          # gracefully stop the VM (ACPI shutdown locally; ec2 stop-instances on AWS)
+cs2630 config            # choose which VM cs2630 talks to: AWS, local VirtualBox, or ask every time
 cs2630 install host      # ./install-host.sh
 cs2630 install client    # ./install-client.sh
 cs2630 install aws       # ./install-aws.sh
@@ -158,7 +179,9 @@ cs2630 verify            # ./scripts/verify.sh
 cs2630 autostart         # ./scripts/configure-vm-autostart.sh
 ```
 
-`poweron`/`poweroff` detect whether they're running on the host (VirtualBox present locally) or a remote client; on a client they run the command over `ssh cs2630-host` instead, driving `VBoxManage` directly on whichever OS the host happens to be. Make sure `~/.local/bin` is on your `PATH` — the installers warn if it isn't.
+If you've set up both a local VM and an AWS instance, `sh`/`code`/`poweron`/`poweroff` need to know which one you mean — `cs2630` asks the first time (AWS, local, or ask-every-time) and remembers your answer in `~/.config/cs2630/access-mode`; change it anytime with `cs2630 config`. If you've only ever set up one path, there's nothing to think about — it's just used automatically once chosen.
+
+`poweron`/`poweroff` in local mode detect whether they're running on the host (VirtualBox present locally) or a remote client; on a client they run the command over `ssh cs2630-host` instead, driving `VBoxManage` directly on whichever OS the host happens to be. Make sure `~/.local/bin` is on your `PATH` — the installers warn if it isn't.
 
 ---
 

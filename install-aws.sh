@@ -8,6 +8,12 @@
 # Safe to re-run — reuses an existing key pair / security group / instance
 # instead of creating duplicates — but DOES create real, billable AWS
 # resources on your account. See the confirmation prompt below.
+#
+# Using this from more than one machine (same AWS account)? See the
+# GRANT_PUBKEY / GRANT_PUBKEY_FILE option in Phase 8 below — the .pem this
+# script creates can't be copied between machines (AWS never re-exports
+# it), so a second machine gets access by having its own public key added
+# instead.
 
 set -euo pipefail
 
@@ -21,6 +27,8 @@ ok()    { printf '\e[1;32m[ OK ]\e[0m  %s\n' "$*"; }
 fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
 ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s [y/N] ' "$*" >/dev/tty; read -r _ans </dev/tty; [[ "$_ans" =~ ^[Yy]$ ]]; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ###############################################################################
 # Parameters (override via environment variables for unattended use)
 ###############################################################################
@@ -33,6 +41,12 @@ KEY_NAME="${KEY_NAME:-cs2630-$(whoami)}"
 SG_NAME="${SG_NAME:-cs2630-aws-sg}"
 INSTANCE_TAG="${INSTANCE_TAG:-cs2630-aws}"
 VM_USER="${VM_USER:-student}"
+# Authorize an additional machine's SSH public key on the instance (see
+# Phase 8 below) — either inline or from a file. AWS never re-exports the
+# .pem private key material, so this is how a second machine gets access
+# without copying private key material around.
+GRANT_PUBKEY="${GRANT_PUBKEY:-}"
+GRANT_PUBKEY_FILE="${GRANT_PUBKEY_FILE:-}"
 
 AWS=(aws --region "$AWS_REGION")
 
@@ -177,7 +191,45 @@ $SSH_READY || fail "SSH did not become reachable after 5 minutes. Check the inst
 ok "SSH is reachable."
 
 ###############################################################################
-# Phase 8: Install course software packages
+# Phase 8: Authorize an additional machine (optional)
+###############################################################################
+# Accessing this instance from more than one machine? You don't need to copy
+# this machine's .pem around (and AWS won't let you re-download it anyway).
+# On the OTHER machine, generate a normal SSH keypair if it doesn't have one
+# yet (ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519), then run this script here
+# — on a machine that already has working access — with that machine's
+# public key:
+#   GRANT_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" ./install-aws.sh
+# or:
+#   GRANT_PUBKEY_FILE=~/other-machine-key.pub ./install-aws.sh
+# The other machine can then connect directly with its own key — no .pem
+# needed there.
+
+if [[ -n "$GRANT_PUBKEY_FILE" ]]; then
+    [[ -f "$GRANT_PUBKEY_FILE" ]] || fail "GRANT_PUBKEY_FILE not found: $GRANT_PUBKEY_FILE"
+    GRANT_PUBKEY="$(cat "$GRANT_PUBKEY_FILE")"
+fi
+
+if [[ -n "$GRANT_PUBKEY" ]]; then
+    info "Authorizing additional public key on the instance..."
+    if printf '%s\n' "$GRANT_PUBKEY" | ssh -i "$PEM_FILE" -o StrictHostKeyChecking=accept-new \
+        "${VM_USER}@${PUBLIC_DNS}" '
+            set -euo pipefail
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+            key="$(cat)"
+            grep -qxF "$key" ~/.ssh/authorized_keys || echo "$key" >> ~/.ssh/authorized_keys
+        '
+    then
+        ok "Public key authorized. That machine can now connect directly:"
+        ok "    ssh -i <its private key> ${VM_USER}@${PUBLIC_DNS}"
+    else
+        fail "Failed to authorize the additional public key. Check SSH connectivity and try again."
+    fi
+fi
+
+###############################################################################
+# Phase 9: Install course software packages
 ###############################################################################
 
 info "Installing course software packages on the instance (takes a few minutes)..."
@@ -201,7 +253,7 @@ else
 fi
 
 ###############################################################################
-# Phase 9: SSH config alias
+# Phase 10: SSH config alias
 ###############################################################################
 
 SSH_DIR="$HOME/.ssh"
@@ -242,6 +294,34 @@ EOF
 chmod 600 "$AWS_CONF"
 ok "SSH alias written: cs2630-aws -> ${VM_USER}@${PUBLIC_DNS}"
 
+AWS_STATE_DIR="$HOME/.config/cs2630"
+mkdir -p "$AWS_STATE_DIR"
+cat > "$AWS_STATE_DIR/aws-instance" <<EOF
+INSTANCE_ID=$INSTANCE_ID
+AWS_REGION=$AWS_REGION
+EOF
+ok "Recorded AWS instance info in $AWS_STATE_DIR/aws-instance"
+
+###############################################################################
+# Phase 11: Install cs2630 CLI helper
+###############################################################################
+
+info "Installing cs2630 CLI helper..."
+mkdir -p "$HOME/.local/bin"
+chmod +x "$SCRIPT_DIR/bin/cs2630"
+ln -sf "$SCRIPT_DIR/bin/cs2630" "$HOME/.local/bin/cs2630"
+ok "cs2630 CLI linked: $HOME/.local/bin/cs2630 -> $SCRIPT_DIR/bin/cs2630"
+
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*)
+        ok '$HOME/.local/bin is already on PATH.'
+        ;;
+    *)
+        warn '$HOME/.local/bin is not on your PATH.'
+        warn 'Add this to your shell rc file: export PATH="$HOME/.local/bin:$PATH"'
+        ;;
+esac
+
 ###############################################################################
 # Summary
 ###############################################################################
@@ -257,6 +337,11 @@ info "SSH key:      $PEM_FILE"
 printf '\n'
 info "Connect (matches the course's own AWS instructions):"
 info "    ssh -A -L 8080:localhost:8080 cs2630-aws"
+printf '\n'
+info "Or use the cs2630 CLI helper:"
+info "    cs2630 sh              # ssh cs2630-aws (or ssh cs2630, depending on your access mode)"
+info "    cs2630 poweron|poweroff"
+info "    cs2630 config           # choose which VM cs2630 talks to (AWS, local, or ask each time)"
 printf '\n'
 warn "This is a real, billable AWS resource. When you're done with it:"
 warn "  Stop (keep, restartable):   aws ec2 stop-instances --instance-ids $INSTANCE_ID --region $AWS_REGION"
