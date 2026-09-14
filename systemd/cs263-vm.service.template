@@ -1,0 +1,14 @@
+[Unit]
+Description=CS263 VirtualBox VM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/VBoxManage startvm "__VM_NAME__" --type headless
+ExecStop=/usr/bin/VBoxManage controlvm "__VM_NAME__" acpipowerbutton
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target
