@@ -268,6 +268,48 @@ else
 fi
 
 ###############################################################################
+# Phase 9: VS Code Remote-SSH extension
+###############################################################################
+
+info "Checking for VS Code Remote-SSH extension..."
+if command -v code &>/dev/null; then
+    if code --list-extensions 2>/dev/null | grep -qi '^ms-vscode-remote\.remote-ssh$'; then
+        ok "VS Code Remote-SSH extension is installed."
+    else
+        warn "VS Code Remote-SSH extension not found."
+        if ask "Install it now via the code CLI?"; then
+            code --install-extension ms-vscode-remote.remote-ssh
+            ok "Remote-SSH extension installed."
+        else
+            warn "Install manually later: code --install-extension ms-vscode-remote.remote-ssh"
+        fi
+    fi
+else
+    warn "VS Code 'code' CLI not found."
+    warn "Install VS Code and the Remote-SSH extension (ms-vscode-remote.remote-ssh) to connect to cs263 from your editor."
+fi
+
+###############################################################################
+# Phase 10: Install cs263 CLI helper
+###############################################################################
+
+info "Installing cs263 CLI helper..."
+mkdir -p "$HOME/.local/bin"
+chmod +x "$SCRIPT_DIR/bin/cs263"
+ln -sf "$SCRIPT_DIR/bin/cs263" "$HOME/.local/bin/cs263"
+ok "cs263 CLI linked: $HOME/.local/bin/cs263 -> $SCRIPT_DIR/bin/cs263"
+
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*)
+        ok '$HOME/.local/bin is already on PATH.'
+        ;;
+    *)
+        warn '$HOME/.local/bin is not on your PATH.'
+        warn 'Add this to your shell rc file: export PATH="$HOME/.local/bin:$PATH"'
+        ;;
+esac
+
+###############################################################################
 # Summary
 ###############################################################################
 
@@ -281,6 +323,12 @@ info "CachyOS username:       ${CACHYOS_USER}"
 printf '\n'
 info "You can SSH directly to the VM from this host with:"
 info "    ssh cs263"
+printf '\n'
+info "Or use the cs263 CLI helper:"
+info "    cs263 sh              # ssh cs263"
+info "    cs263 code <path>     # open <path> on the VM in VS Code"
+info "    cs263 poweron|poweroff"
+info "    cs263 verify"
 printf '\n'
 info "Next steps:"
 info "  1. Import the CS263 OVA in VirtualBox (follow course instructions)."

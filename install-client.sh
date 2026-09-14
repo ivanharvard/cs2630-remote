@@ -15,6 +15,8 @@ ok()    { printf '\e[1;32m[ OK ]\e[0m  %s\n' "$*"; }
 fail()  { printf '\e[1;31m[FAIL]\e[0m  %s\n' "$*" >&2; exit 1; }
 ask()   { printf '\e[1;36m[ ?? ]\e[0m  %s ' "$*" >/dev/tty; read -r _ans </dev/tty; echo "$_ans"; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ###############################################################################
 # Phase 1: Check SSH availability
 ###############################################################################
@@ -269,6 +271,49 @@ else
 fi
 
 ###############################################################################
+# Phase 10: VS Code Remote-SSH extension
+###############################################################################
+
+info "Checking for VS Code Remote-SSH extension..."
+if command -v code &>/dev/null; then
+    if code --list-extensions 2>/dev/null | grep -qi '^ms-vscode-remote\.remote-ssh$'; then
+        ok "VS Code Remote-SSH extension is installed."
+    else
+        warn "VS Code Remote-SSH extension not found."
+        _install="$(ask "[??] Install it now via the code CLI? [Y/n]:")"
+        if [[ -z "$_install" || "$_install" =~ ^[Yy]$ ]]; then
+            code --install-extension ms-vscode-remote.remote-ssh
+            ok "Remote-SSH extension installed."
+        else
+            warn "Install manually later: code --install-extension ms-vscode-remote.remote-ssh"
+        fi
+    fi
+else
+    warn "VS Code 'code' CLI not found."
+    warn "Install VS Code and the Remote-SSH extension (ms-vscode-remote.remote-ssh) to connect to cs263 from your editor."
+fi
+
+###############################################################################
+# Phase 11: Install cs263 CLI helper
+###############################################################################
+
+info "Installing cs263 CLI helper..."
+mkdir -p "$HOME/.local/bin"
+chmod +x "$SCRIPT_DIR/bin/cs263"
+ln -sf "$SCRIPT_DIR/bin/cs263" "$HOME/.local/bin/cs263"
+ok "cs263 CLI linked: $HOME/.local/bin/cs263 -> $SCRIPT_DIR/bin/cs263"
+
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*)
+        ok '$HOME/.local/bin is already on PATH.'
+        ;;
+    *)
+        warn '$HOME/.local/bin is not on your PATH.'
+        warn 'Add this to your shell rc file: export PATH="$HOME/.local/bin:$PATH"'
+        ;;
+esac
+
+###############################################################################
 # Summary
 ###############################################################################
 
@@ -282,4 +327,10 @@ printf '    ssh cachyos-home\n'
 printf '\n'
 printf 'Connect directly to CS263 through the host:\n'
 printf '    ssh cs263\n'
+printf '\n'
+printf 'Or use the cs263 CLI helper:\n'
+printf '    cs263 sh              # ssh cs263\n'
+printf '    cs263 code <path>     # open <path> on the VM in VS Code\n'
+printf '    cs263 poweron|poweroff\n'
+printf '    cs263 verify\n'
 printf '\n'

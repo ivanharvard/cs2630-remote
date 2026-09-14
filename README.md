@@ -18,6 +18,12 @@ Final UX: `ssh cs263` from any Tailscale-connected client.
 
 ---
 
+## Requirements
+
+- **CachyOS host and remote client:** [VS Code](https://code.visualstudio.com/) with the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension (`ms-vscode-remote.remote-ssh`) installed. Both `install-host.sh` and `install-client.sh` check for it (via the `code` CLI) and offer to install it if missing.
+
+---
+
 ## Quick start
 
 ### 1 — CachyOS host
@@ -42,6 +48,7 @@ The script will:
 - Walk you through Tailscale enrollment if needed
 - Harden SSH (drop-in config, no existing files overwritten)
 - Add your user to `vboxusers`
+- Check for the VS Code Remote-SSH extension and offer to install it
 
 ### 2 — Import the course VM
 
@@ -96,6 +103,8 @@ The script generates `~/.ssh/config.d/cs263.conf` and installs your public key o
 cachyos-cs263-remote/
 ├── install-host.sh              # CachyOS host setup
 ├── install-client.sh            # Remote SSH client setup
+├── bin/
+│   └── cs263                    # Unified CLI helper (see below)
 ├── scripts/
 │   ├── configure-vm-autostart.sh
 │   └── verify.sh
@@ -104,6 +113,25 @@ cachyos-cs263-remote/
 └── docs/
     └── AGENT_SETUP.md           # Full design spec
 ```
+
+---
+
+## `cs263` CLI helper
+
+Both `install-host.sh` and `install-client.sh` symlink [`bin/cs263`](bin/cs263) to `~/.local/bin/cs263`, giving you one command on either machine:
+
+```bash
+cs263 sh                # ssh cs263
+cs263 code <path>       # code --remote ssh-remote+cs263 /home/student/<path>
+cs263 poweron           # start the VM — hops to the host over SSH if run from a client
+cs263 poweroff          # gracefully stop the VM (ACPI shutdown)
+cs263 install host      # ./install-host.sh
+cs263 install client    # ./install-client.sh
+cs263 verify            # ./scripts/verify.sh
+cs263 autostart         # ./scripts/configure-vm-autostart.sh
+```
+
+`poweron`/`poweroff` detect whether they're running on the CachyOS host (VirtualBox present) or a remote client; on a client they run the command over `ssh cachyos-home` instead. Make sure `~/.local/bin` is on your `PATH` — the installers warn if it isn't.
 
 ---
 

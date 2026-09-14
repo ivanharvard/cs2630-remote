@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Unified helper for the CS263 remote-access setup: SSH, VS Code Remote-SSH,
+# VM power control, and shortcuts to the repo's setup/verify scripts.
+# Installed as a symlink at ~/.local/bin/cs263 by install-host.sh and
+# install-client.sh — works the same whether run on the CachyOS host or a
+# remote client, hopping over SSH automatically where needed.
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+VM_USER="${VM_USER:-student}"
+VM_REMOTE_HOME="${VM_REMOTE_HOME:-/home/$VM_USER}"
+
+usage() {
+    cat <<'EOF'
+Usage: cs263 <command> [args]
+
+  sh                    SSH into the CS263 VM                 (ssh cs263)
+  code <path>           Open <path> on the VM in VS Code       (Remote-SSH)
+  poweron               Start the VM (hops to the host if needed)
+  poweroff              Gracefully stop the VM (ACPI shutdown)
+  install host          Run install-host.sh
+  install client        Run install-client.sh
+  verify                Run scripts/verify.sh
+  autostart             Run scripts/configure-vm-autostart.sh
+EOF
+}
+
+# True when run directly on the CachyOS host (VirtualBox present locally).
+on_host() { command -v VBoxManage &>/dev/null; }
+
+# Run a shell command on the CachyOS host: locally if we're already there,
+# otherwise over the cachyos-home SSH alias.
+run_on_host() {
+    if on_host; then
+        bash -c "$1"
+    else
+        ssh cachyos-home "$1"
+    fi
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    sh)
+        exec ssh cs263
+        ;;
+    code)
+        [[ $# -ge 1 ]] || { echo "Usage: cs263 code <path>" >&2; exit 1; }
+        target="$1"
+        [[ "$target" = /* ]] || target="$VM_REMOTE_HOME/$target"
+        exec code --remote "ssh-remote+cs263" "$target"
+        ;;
+    poweron)
+        run_on_host "systemctl --user start cs263-vm.service"
+        ;;
+    poweroff)
+        run_on_host "systemctl --user stop cs263-vm.service"
+        ;;
+    install)
+        sub="${1:-}"
+        case "$sub" in
+            host)   exec "$REPO_DIR/install-host.sh" ;;
+            client) exec "$REPO_DIR/install-client.sh" ;;
+            *)
+                echo "Usage: cs263 install <host|client>" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    verify)
+        exec "$REPO_DIR/scripts/verify.sh"
+        ;;
+    autostart)
+        exec "$REPO_DIR/scripts/configure-vm-autostart.sh"
+        ;;
+    -h|--help|help|"")
+        usage
+        ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        usage
+        exit 1
+        ;;
+esac
